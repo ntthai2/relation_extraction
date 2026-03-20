@@ -1,6 +1,3 @@
 /__pycache__
 /.vscode
-/runs/*
-!/runs/ablation/
-/runs/ablation/*
-!/runs/ablation/train.log
+/runs

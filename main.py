@@ -63,14 +63,20 @@ def parse_args():
     
     # Experiment configuration
     parser.add_argument(
+        "--model-type",
+        choices=["scibert", "deberta", "roberta_large", "bert_large", "spert", "plmarker", "pure_lite"],
+        default="scibert",
+        help="Model type to use"
+    )
+    parser.add_argument(
         "--model-variants",
         default="e1e2_concat",
-        help="Comma-separated model variants: " + ", ".join(MODEL_VARIANTS.keys())
+        help="Comma-separated model pooling variants: e1e2_concat, cls_only, mean_pool, e1_only"
     )
     parser.add_argument(
         "--loss-variants",
         default="weighted_ce",
-        help="Comma-separated loss variants: " + ", ".join(LOSS_VARIANTS.keys())
+        help="Comma-separated loss variants: weighted_ce, ce_uniform, focal, label_smooth"
     )
     parser.add_argument(
         "--frozen-bert",
@@ -81,6 +87,40 @@ def parse_args():
         "--seeds",
         default="42",
         help="Comma-separated seeds for multi-seed runs (e.g., '13,21,42,87,100')"
+    )
+    
+    # Advanced training tricks
+    parser.add_argument(
+        "--separate-lr",
+        action="store_true",
+        help="Use separate learning rates for encoder and classifier head"
+    )
+    parser.add_argument(
+        "--llrd",
+        action="store_true",
+        help="Use layer-wise learning rate decay (only if --separate-lr insufficient)"
+    )
+    parser.add_argument(
+        "--grad-accum-steps",
+        type=int,
+        default=1,
+        help="Gradient accumulation steps (default 1, no accumulation)"
+    )
+    parser.add_argument(
+        "--augment",
+        action="store_true",
+        help="Enable symmetric relation augmentation (CONJUNCTION, COMPARE)"
+    )
+    parser.add_argument(
+        "--undersample-conjunction",
+        action="store_true",
+        help="Undersample CONJUNCTION to reduce dominance"
+    )
+    parser.add_argument(
+        "--undersample-target",
+        type=int,
+        default=250,
+        help="Target count for undersampled label"
     )
     
     # Hyperparameters
@@ -114,8 +154,12 @@ def parse_args():
     return parser.parse_args()
 
 
+
 def main():
     args = parse_args()
+
+    if args.separate_lr and args.llrd:
+        argparse.ArgumentParser().error("--separate-lr and --llrd are mutually exclusive.")
     
     # Determine log path: use explicit --log-file if provided, else auto-generate
     if args.log_file.strip():
@@ -151,19 +195,26 @@ def main():
         run_experiment_suite(
             model_variants=model_vars,
             loss_variants=loss_vars,
-            frozen_variants=[args.frozen_bert],
+            frozen_bert=args.frozen_bert,
             seeds=seeds,
+            model_type=args.model_type,
+            separate_lr=args.separate_lr,
+            llrd=args.llrd,
+            grad_accum_steps=args.grad_accum_steps,
+            augment=args.augment,
+            undersample_conjunction=args.undersample_conjunction,
+            undersample_target=args.undersample_target,
             max_len=args.max_len,
             batch_size=args.batch_size,
             num_epochs=args.epochs,
-            lr=args.lr,
+            learning_rate=args.lr,
             weight_decay=args.weight_decay,
             warmup_ratio=args.warmup_ratio,
             patience=args.patience,
             min_delta=args.min_delta,
             output_dir=args.output_dir,
             run_name=args.run_name,
-            max_samples_per_split=args.max_samples,
+            max_samples=args.max_samples,
         )
 
 

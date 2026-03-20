@@ -18,6 +18,9 @@ TEST_FILE = "scierc/test.txt"
 # ── Model ─────────────────────────────────────────────────────────────────────
 
 MODEL_NAME = "allenai/scibert_scivocab_uncased"
+DEBERTA_MODEL_NAME = "microsoft/deberta-v3-base"
+ROBERTA_LARGE_MODEL_NAME = "roberta-large"
+BERT_LARGE_MODEL_NAME = "bert-large-uncased"
 MAX_LEN = 256
 HIDDEN_SIZE = 768
 
@@ -77,9 +80,32 @@ LOSS_VARIANTS = {
         "name": "Uniform CrossEntropy",
         "description": "Standard cross-entropy without class weights"
     },
+    "focal": {
+        "name": "Focal Loss",
+        "description": "Down-weights well-classified examples; focuses on hard/minority classes"
+    },
+    "label_smooth": {
+        "name": "Label Smoothing",
+        "description": "Cross-entropy with label smoothing (0.1)"
+    },
 }
 
 # ── Special Tokens ────────────────────────────────────────────────────────────
 
 ENTITY_MARKERS = ["[E1]", "[/E1]", "[E2]", "[/E2]"]
+LEVITATED_MARKERS = ["[M]", "[/M]"]
 USE_ENTITY_MARKERS = True
+
+# ── SpERT Hyperparameters ──────────────────────────────────────────────────────
+
+SPERT_WIDTH_EMBEDDING_DIM = 25
+SPERT_MAX_SPAN_WIDTH = 30
+
+# ── PURE-Lite Hyperparameters ──────────────────────────────────────────────────
+
+PURE_LITE_TYPE_DIM = 64
+
+# ── Data Augmentation ──────────────────────────────────────────────────────────
+
+SYMMETRIC_RELATIONS = {"CONJUNCTION", "COMPARE"}
+UNDERSAMPLE_CONJUNCTION_TARGET = 250

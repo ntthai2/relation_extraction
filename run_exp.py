@@ -8,17 +8,26 @@ import numpy as np
 from collections import Counter
 from torch import nn
 from torch.utils.data import DataLoader
+from torch.optim import AdamW
 from transformers import AutoTokenizer
 
 from config import (
-    LABELS, LABEL2ID, NUM_LABELS, MODEL_NAME,
+    LABELS, LABEL2ID, NUM_LABELS, MODEL_NAME, DEBERTA_MODEL_NAME,
+    ROBERTA_LARGE_MODEL_NAME, BERT_LARGE_MODEL_NAME, LEVITATED_MARKERS,
     BATCH_SIZE, EPOCHS, LR, WEIGHT_DECAY, WARMUP_RATIO, SEED,
     PATIENCE, MIN_DELTA, DEFAULT_OUTPUT_DIR, ENTITY_MARKERS, USE_ENTITY_MARKERS,
-    TRAIN_FILE, DEV_FILE, TEST_FILE, MODEL_VARIANTS, LOSS_VARIANTS
+    TRAIN_FILE, DEV_FILE, TEST_FILE, MODEL_VARIANTS, LOSS_VARIANTS,
+    MAX_LEN, DEFAULT_RUN_NAME
 )
-from dataset import SciERCDataset
-from model import SciBERTRelationClassifier, FrozenSciBERTRelationClassifier
-from train_core import train_model
+from dataset import (
+    SciERCDataset, PLMarkerSciERCDataset, augment_symmetric, undersample_label
+)
+from model import (
+    SciBERTRelationClassifier, FrozenSciBERTRelationClassifier,
+    DeBERTaRelationClassifier, RoBERTaLargeRelationClassifier, BERTLargeRelationClassifier,
+    SpERTRelationClassifier, PLMarkerRelationClassifier, PURELiteRelationClassifier, FocalLoss
+)
+from train_core import train_model, train_spert_model
 from eval import compute_metrics, save_test_artifacts, aggregate_results
 
 
@@ -53,153 +62,285 @@ def get_criterion(loss_variant, device):
         return nn.CrossEntropyLoss(weight=class_weights)
     elif loss_variant == "ce_uniform":
         return nn.CrossEntropyLoss()
+    elif loss_variant == "focal":
+        class_weights = compute_class_weights(device)
+        return FocalLoss(gamma=2.0, weight=class_weights)
+    elif loss_variant == "label_smooth":
+        return nn.CrossEntropyLoss(label_smoothing=0.1)
     else:
         raise ValueError(f"Unknown loss variant: {loss_variant}")
 
 
+def make_two_group_optimizer(
+    model: nn.Module,
+    base_lr: float,
+    weight_decay: float,
+    head_lr_multiplier: float = 10.0,
+) -> AdamW:
+    """
+    Create optimizer with separate learning rates for encoder and classifier head.
+    Encoder gets base_lr; classifier head gets base_lr * head_lr_multiplier.
+    """
+    return AdamW([
+        {"params": model.bert.parameters(), "lr": base_lr, "weight_decay": weight_decay},
+        {"params": model.classifier.parameters(), "lr": base_lr * head_lr_multiplier, "weight_decay": 0.0},
+    ])
+
+
+def make_llrd_optimizer(
+    model: nn.Module,
+    base_lr: float,
+    weight_decay: float,
+    decay_factor: float = 0.9,
+) -> AdamW:
+    """
+    Layer-wise learning rate decay. Assigns per-layer decaying LRs.
+    Classifier head: base_lr * 2
+    Top BERT layer: base_lr
+    Each lower layer: multiplied by decay_factor
+    Embeddings: lowest LR
+    """
+    num_layers = model.bert.config.num_hidden_layers
+    param_groups = []
+    param_groups.append({"params": model.classifier.parameters(),
+                          "lr": base_lr * 2, "weight_decay": 0.0})
+    for layer_idx in range(num_layers - 1, -1, -1):
+        lr = base_lr * (decay_factor ** (num_layers - 1 - layer_idx))
+        param_groups.append({"params": model.bert.encoder.layer[layer_idx].parameters(),
+                              "lr": lr, "weight_decay": weight_decay})
+    param_groups.append({"params": model.bert.embeddings.parameters(),
+                          "lr": base_lr * (decay_factor ** num_layers),
+                          "weight_decay": weight_decay})
+    return AdamW(param_groups)
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Model and Dataset Registries
+# ────────────────────────────────────────────────────────────────────────────────
+
+MODEL_REGISTRY = {
+    "scibert":       SciBERTRelationClassifier,
+    "deberta":       DeBERTaRelationClassifier,
+    "roberta_large": RoBERTaLargeRelationClassifier,
+    "bert_large":    BERTLargeRelationClassifier,
+    "spert":         SpERTRelationClassifier,
+    "plmarker":      PLMarkerRelationClassifier,
+    "pure_lite":     PURELiteRelationClassifier,
+}
+
+DATASET_REGISTRY = {
+    "scibert":       SciERCDataset,
+    "deberta":       SciERCDataset,
+    "roberta_large": SciERCDataset,
+    "bert_large":    SciERCDataset,
+    "spert":         SciERCDataset,
+    "plmarker":      PLMarkerSciERCDataset,
+    "pure_lite":     SciERCDataset,
+}
+
+
+def get_model_name(model_type: str) -> str:
+    """Map model_type CLI string to HuggingFace model name string."""
+    return {
+        "scibert": MODEL_NAME,
+        "deberta": DEBERTA_MODEL_NAME,
+        "roberta_large": ROBERTA_LARGE_MODEL_NAME,
+        "bert_large": BERT_LARGE_MODEL_NAME,
+        "spert": MODEL_NAME,
+        "plmarker": MODEL_NAME,
+        "pure_lite": MODEL_NAME,
+    }[model_type]
+
+
 def run_single_seed(
-    seed,
-    model_variant,
-    loss_variant,
-    frozen_bert,
-    max_len,
-    batch_size,
-    num_epochs,
-    lr,
-    weight_decay,
-    warmup_ratio,
-    patience,
-    min_delta,
-    output_dir,
-    max_samples_per_split=0,
-):
-    """
-    Run a single experiment with given hyperparams.
-    
-    Returns:
-        dict: Experiment results
-    """
+    seed: int,
+    model_variant: str,
+    loss_variant: str,
+    frozen_bert: bool,
+    num_epochs: int,
+    learning_rate: float,
+    weight_decay: float,
+    warmup_ratio: float,
+    patience: int,
+    min_delta: float,
+    batch_size: int,
+    max_len: int,
+    max_samples: int,
+    output_dir: str,
+    model_type: str = "scibert",
+    separate_lr: bool = False,
+    llrd: bool = False,
+    grad_accum_steps: int = 1,
+    augment: bool = False,
+    undersample_conjunction: bool = False,
+    undersample_target: int = 250,
+) -> dict:
+    """Run a single training seed. Returns result dict with dev/test macro F1."""
+
     set_seed(seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"\n{'='*60}")
-    print(f"Seed: {seed} | Model: {model_variant} | Loss: {loss_variant} | Frozen: {frozen_bert}")
-    print(f"{'='*60}")
-    print(f"Device: {device}")
 
-    # Setup tokenizer and add special tokens if needed
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    if USE_ENTITY_MARKERS:
-        special_tokens = {"additional_special_tokens": ENTITY_MARKERS}
-        tokenizer.add_special_tokens(special_tokens)
+    # Tokenizer
+    model_name = get_model_name(model_type)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
 
-    # Setup datasets
-    train_set = SciERCDataset(
+    special_tokens = {"additional_special_tokens": list(ENTITY_MARKERS)}
+    if model_type == "plmarker":
+        special_tokens["additional_special_tokens"] += LEVITATED_MARKERS
+    tokenizer.add_special_tokens(special_tokens)
+
+    # Dataset
+    DatasetClass = DATASET_REGISTRY[model_type]
+    train_set = DatasetClass(
         TRAIN_FILE,
         tokenizer,
         max_len=max_len,
-        max_samples=max_samples_per_split,
+        max_samples=max_samples,
         use_entity_markers=USE_ENTITY_MARKERS,
     )
-    dev_set = SciERCDataset(
+    if augment:
+        train_set.samples = augment_symmetric(train_set.samples)
+    if undersample_conjunction:
+        train_set.samples = undersample_label(
+            train_set.samples,
+            "CONJUNCTION",
+            undersample_target,
+            seed=seed,
+        )
+
+    dev_set = DatasetClass(
         DEV_FILE,
         tokenizer,
         max_len=max_len,
-        max_samples=max_samples_per_split,
+        max_samples=max_samples,
         use_entity_markers=USE_ENTITY_MARKERS,
     )
-    test_set = SciERCDataset(
+    test_set = DatasetClass(
         TEST_FILE,
         tokenizer,
         max_len=max_len,
-        max_samples=max_samples_per_split,
+        max_samples=max_samples,
         use_entity_markers=USE_ENTITY_MARKERS,
     )
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
-    dev_loader = DataLoader(dev_set, batch_size=batch_size)
-    test_loader = DataLoader(test_set, batch_size=batch_size)
+    dev_loader = DataLoader(dev_set, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False)
 
-    print(f"Train: {len(train_set)} | Dev: {len(dev_set)} | Test: {len(test_set)}")
+    # Model
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ModelClass = MODEL_REGISTRY[model_type]
+    pooling = MODEL_VARIANTS[model_variant]["pooling"]
 
-    # Select model
-    pooling_strategy = MODEL_VARIANTS[model_variant]["pooling"]
     if frozen_bert:
-        model = FrozenSciBERTRelationClassifier(
-            num_labels=NUM_LABELS,
-            dropout=0.1,
-            pooling=pooling_strategy
-        )
+        model = FrozenSciBERTRelationClassifier(pooling=pooling)
     else:
-        model = SciBERTRelationClassifier(
-            num_labels=NUM_LABELS,
-            dropout=0.1,
-            pooling=pooling_strategy
-        )
+        if model_type in {"spert", "plmarker", "pure_lite"}:
+            model = ModelClass()
+        else:
+            model = ModelClass(pooling=pooling)
 
-    # Resize token embeddings if special tokens were added
-    if USE_ENTITY_MARKERS:
-        model.bert.resize_token_embeddings(len(tokenizer))
-    model.to(device)
+    model.bert.resize_token_embeddings(len(tokenizer))
+    model = model.float().to(device)
 
-    # Get loss function
+    # Optimizer
+    if separate_lr and llrd:
+        raise ValueError("--separate-lr and --llrd are mutually exclusive.")
+    if llrd:
+        optimizer = make_llrd_optimizer(model, learning_rate, weight_decay)
+    elif separate_lr:
+        optimizer = make_two_group_optimizer(model, learning_rate, weight_decay)
+    else:
+        optimizer = None
+
+    # Loss
     criterion = get_criterion(loss_variant, device)
 
-    # Prepare output directory
-    run_subdir = os.path.join(
+    # Run directory
+    run_dir = os.path.join(
         output_dir,
-        f"{model_variant}_{loss_variant}_frozen{int(frozen_bert)}_seed{seed}"
+        f"{model_type}_{model_variant}_{loss_variant}"
+        f"_frozen{int(frozen_bert)}"
+        f"_llrd{int(llrd)}"
+        f"_aug{int(augment)}"
+        f"_seed{seed}",
     )
-    os.makedirs(run_subdir, exist_ok=True)
-    model_save_path = os.path.join(run_subdir, "best_model.pt")
+    os.makedirs(run_dir, exist_ok=True)
+    model_save_path = os.path.join(run_dir, "best_model.pt")
 
-    # Train model
-    train_results = train_model(
-        model=model,
-        train_loader=train_loader,
-        dev_loader=dev_loader,
-        test_loader=test_loader,
-        device=device,
-        num_epochs=num_epochs,
-        learning_rate=lr,
-        weight_decay=weight_decay,
-        warmup_ratio=warmup_ratio,
-        patience=patience,
-        min_delta=min_delta,
-        criterion=criterion,
-        model_save_path=model_save_path,
-    )
+    # Train
+    if model_type == "spert":
+        result = train_spert_model(
+            model=model,
+            train_loader=train_loader,
+            dev_loader=dev_loader,
+            test_loader=test_loader,
+            device=device,
+            num_epochs=num_epochs,
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            warmup_ratio=warmup_ratio,
+            patience=patience,
+            min_delta=min_delta,
+            criterion=criterion,
+            model_save_path=model_save_path,
+            optimizer=optimizer,
+            grad_accum_steps=grad_accum_steps,
+        )
+    else:
+        result = train_model(
+            model=model,
+            train_loader=train_loader,
+            dev_loader=dev_loader,
+            test_loader=test_loader,
+            device=device,
+            num_epochs=num_epochs,
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            warmup_ratio=warmup_ratio,
+            patience=patience,
+            min_delta=min_delta,
+            criterion=criterion,
+            model_save_path=model_save_path,
+            optimizer=optimizer,
+            grad_accum_steps=grad_accum_steps,
+        )
 
-    # Save artifacts
-    save_test_artifacts(run_subdir, train_results["test_labels"], train_results["test_preds"])
-
+    save_test_artifacts(run_dir, result["test_labels"], result["test_preds"])
     return {
         "seed": seed,
         "model_variant": model_variant,
         "loss_variant": loss_variant,
         "frozen_bert": frozen_bert,
-        "best_epoch": train_results["best_epoch"],
-        "best_dev_macro_f1": train_results["best_dev_macro_f1"],
-        "test_macro_f1": train_results["test_macro_f1"],
-        "run_dir": run_subdir,
+        "best_epoch": result["best_epoch"],
+        "best_dev_macro_f1": result["best_dev_macro_f1"],
+        "test_macro_f1": result["test_macro_f1"],
+        "run_dir": run_dir,
     }
 
 
 def run_experiment_suite(
-    model_variants=None,
-    loss_variants=None,
-    frozen_variants=None,
-    seeds=None,
-    max_len=256,
-    batch_size=32,
-    num_epochs=10,
-    lr=2e-5,
-    weight_decay=0.01,
-    warmup_ratio=0.1,
-    patience=3,
-    min_delta=1e-4,
-    output_dir=DEFAULT_OUTPUT_DIR,
-    run_name="experiment",
-    max_samples_per_split=0,
+    model_variants: list[str],
+    loss_variants: list[str],
+    seeds: list[int],
+    frozen_bert: bool = False,
+    num_epochs: int = EPOCHS,
+    learning_rate: float = LR,
+    weight_decay: float = WEIGHT_DECAY,
+    warmup_ratio: float = WARMUP_RATIO,
+    patience: int = PATIENCE,
+    min_delta: float = MIN_DELTA,
+    batch_size: int = BATCH_SIZE,
+    max_len: int = MAX_LEN,
+    max_samples: int = 0,
+    output_dir: str = DEFAULT_OUTPUT_DIR,
+    run_name: str = DEFAULT_RUN_NAME,
+    model_type: str = "scibert",
+    separate_lr: bool = False,
+    llrd: bool = False,
+    grad_accum_steps: int = 1,
+    augment: bool = False,
+    undersample_conjunction: bool = False,
+    undersample_target: int = 250,
 ):
     """
     Run a comprehensive experiment suite with different configurations.
@@ -215,14 +356,7 @@ def run_experiment_suite(
     Returns:
         dict: Aggregated results across all experiments
     """
-    if model_variants is None:
-        model_variants = ["e1e2_concat"]
-    if loss_variants is None:
-        loss_variants = ["weighted_ce"]
-    if frozen_variants is None:
-        frozen_variants = [False]
-    if seeds is None:
-        seeds = [42]
+    frozen_variants = [frozen_bert]
 
     output_root = os.path.join(output_dir, run_name)
     os.makedirs(output_root, exist_ok=True)
@@ -247,16 +381,23 @@ def run_experiment_suite(
                         model_variant=model_var,
                         loss_variant=loss_var,
                         frozen_bert=frozen,
-                        max_len=max_len,
-                        batch_size=batch_size,
+                        model_type=model_type,
+                        separate_lr=separate_lr,
+                        llrd=llrd,
+                        grad_accum_steps=grad_accum_steps,
+                        augment=augment,
+                        undersample_conjunction=undersample_conjunction,
+                        undersample_target=undersample_target,
                         num_epochs=num_epochs,
-                        lr=lr,
+                        learning_rate=learning_rate,
                         weight_decay=weight_decay,
                         warmup_ratio=warmup_ratio,
                         patience=patience,
                         min_delta=min_delta,
+                        batch_size=batch_size,
+                        max_len=max_len,
+                        max_samples=max_samples,
                         output_dir=output_root,
-                        max_samples_per_split=max_samples_per_split,
                     )
                     all_runs.append(result)
 
