@@ -9,7 +9,7 @@ Guides for running experiments, interpreting results, and extending the codebase
 ### Phase 0 — Initial Training (Single Seed)
 
 ```bash
-python main.py --seeds 42
+python re_main.py --seeds 42
 ```
 
 - Dev macro F1: 0.8898 — Test macro F1: **0.8313** — Best epoch: 8/10
@@ -21,7 +21,7 @@ python main.py --seeds 42
 40 runs: 4 pooling × 2 losses × 5 seeds
 
 ```bash
-python main.py \
+python re_main.py \
   --model-variants e1e2_concat,cls_only,mean_pool,e1_only \
   --loss-variants weighted_ce,ce_uniform \
   --seeds 13,21,42,87,100 \
@@ -51,7 +51,7 @@ python main.py \
 ### Phase 2 — Loss Variants on SciBERT (Mar 2026)
 
 ```bash
-python main.py \
+python re_main.py \
   --model-type scibert \
   --model-variants e1e2_concat \
   --loss-variants focal,label_smooth \
@@ -76,13 +76,13 @@ python main.py \
 All runs: `e1e2_concat + ce_uniform + epochs 100 + patience 10`
 
 ```bash
-python main.py --model-type deberta --model-variants e1e2_concat --loss-variants ce_uniform \
+python re_main.py --model-type deberta --model-variants e1e2_concat --loss-variants ce_uniform \
   --seeds 13,21,42,87,100 --epochs 100 --patience 10 --run-name phase2_deberta
 
-python main.py --model-type roberta_large --model-variants e1e2_concat --loss-variants ce_uniform \
+python re_main.py --model-type roberta_large --model-variants e1e2_concat --loss-variants ce_uniform \
   --seeds 13,21,42,87,100 --epochs 100 --patience 10 --run-name phase2_roberta_large
 
-python main.py --model-type bert_large --model-variants e1e2_concat --loss-variants ce_uniform \
+python re_main.py --model-type bert_large --model-variants e1e2_concat --loss-variants ce_uniform \
   --seeds 13,21,42,87,100 --epochs 100 --patience 10 --run-name phase2_bert_large
 ```
 
@@ -110,16 +110,16 @@ seed 1: 0.6728   seed 2: 0.7162   seed 3: 0.8155   seed 4: 0.8125   seed 5: 0.68
 All runs: `scibert + e1e2_concat + ce_uniform + epochs 100 + patience 10`
 
 ```bash
-python main.py --model-type scibert --model-variants e1e2_concat --loss-variants ce_uniform \
+python re_main.py --model-type scibert --model-variants e1e2_concat --loss-variants ce_uniform \
   --separate-lr --seeds 13,21,42,87,100 --epochs 100 --patience 10 --run-name phase3_separate_lr
 
-python main.py --model-type scibert --model-variants e1e2_concat --loss-variants ce_uniform \
+python re_main.py --model-type scibert --model-variants e1e2_concat --loss-variants ce_uniform \
   --llrd --seeds 13,21,42,87,100 --epochs 100 --patience 10 --run-name phase3_llrd
 
-python main.py --model-type scibert --model-variants e1e2_concat --loss-variants ce_uniform \
+python re_main.py --model-type scibert --model-variants e1e2_concat --loss-variants ce_uniform \
   --augment --seeds 13,21,42,87,100 --epochs 100 --patience 10 --run-name phase3_augment
 
-python main.py --model-type scibert --model-variants e1e2_concat --loss-variants ce_uniform \
+python re_main.py --model-type scibert --model-variants e1e2_concat --loss-variants ce_uniform \
   --undersample-conjunction --seeds 13,21,42,87,100 --epochs 100 --patience 10 --run-name phase3_undersample
 ```
 
@@ -143,10 +143,10 @@ python main.py --model-type scibert --model-variants e1e2_concat --loss-variants
 All runs: `e1e2_concat + ce_uniform + epochs 100 + patience 10`
 
 ```bash
-python main.py --model-type spert --model-variants e1e2_concat --loss-variants ce_uniform \
+python re_main.py --model-type spert --model-variants e1e2_concat --loss-variants ce_uniform \
   --seeds 13,21,42,87,100 --epochs 100 --patience 10 --run-name phase4_spert
 
-python main.py --model-type plmarker --model-variants e1e2_concat --loss-variants ce_uniform \
+python re_main.py --model-type plmarker --model-variants e1e2_concat --loss-variants ce_uniform \
   --seeds 13,21,42,87,100 --epochs 100 --patience 10 --run-name phase4_plmarker
 ```
 
@@ -192,7 +192,7 @@ python main.py --model-type plmarker --model-variants e1e2_concat --loss-variant
 ### Recommended settings for any new run
 
 ```bash
-python main.py \
+python re_main.py \
   --model-type scibert \
   --model-variants e1e2_concat \
   --loss-variants ce_uniform \
@@ -213,7 +213,7 @@ Halve batch size and double accumulation steps — effective batch size stays th
 ### Screening a new backbone (3 seeds first)
 
 ```bash
-python main.py \
+python re_main.py \
   --model-type <new_model> \
   --model-variants e1e2_concat \
   --loss-variants ce_uniform \
@@ -295,26 +295,26 @@ Test F1: 0.8243 ± 0.0052
 
 ### Add a new pooling strategy
 
-1. Add branch in `SciBERTRelationClassifier.forward()` in `model.py`
+1. Add branch in `SciBERTRelationClassifier.forward()` in `re_model.py`
 2. Update `classifier_input_dim` logic in `__init__` if dimension changes
 3. Add entry to `MODEL_VARIANTS` in `config.py`
 
 ### Add a new loss function
 
-1. Add branch in `get_criterion()` in `run_exp.py`
+1. Add branch in `get_criterion()` in `re_run_exp.py`
 2. Add entry to `LOSS_VARIANTS` in `config.py`
 
 ### Add a new backbone
 
 1. Add model name constant to `config.py`
-2. Add new class to `model.py` using `self.bert = AutoModel.from_pretrained(...)` — keep `.bert` attribute name
-3. Add to `MODEL_REGISTRY` and `DATASET_REGISTRY` in `run_exp.py`
-4. Add to `get_model_name()` in `run_exp.py`
-5. Add `--model-type` choice in `main.py`
+2. Add new class to `re_model.py` using `self.bert = AutoModel.from_pretrained(...)` — keep `.bert` attribute name
+3. Add to `MODEL_REGISTRY` and `DATASET_REGISTRY` in `re_run_exp.py`
+4. Add to `get_model_name()` in `re_run_exp.py`
+5. Add `--model-type` choice in `re_main.py`
 
 ### Add a new metric
 
-1. Compute in `save_test_artifacts()` in `eval.py`
+1. Compute in `save_test_artifacts()` in `re_eval.py`
 2. Add to the JSON/CSV output — auto-included in all future runs
 
 ---
