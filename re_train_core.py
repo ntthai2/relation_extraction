@@ -5,7 +5,7 @@ from torch import nn
 from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
 from sklearn.metrics import f1_score
-from eval import compute_metrics, save_test_artifacts
+from re_eval import compute_metrics, save_test_artifacts
 
 
 def train_epoch(model, loader, optimizer, scheduler, criterion, device, grad_accum_steps=1):

@@ -19,16 +19,16 @@ from config import (
     TRAIN_FILE, DEV_FILE, TEST_FILE, MODEL_VARIANTS, LOSS_VARIANTS,
     MAX_LEN, DEFAULT_RUN_NAME
 )
-from dataset import (
+from re_dataset import (
     SciERCDataset, PLMarkerSciERCDataset, augment_symmetric, undersample_label
 )
-from model import (
+from re_model import (
     SciBERTRelationClassifier, FrozenSciBERTRelationClassifier,
     DeBERTaRelationClassifier, RoBERTaLargeRelationClassifier, BERTLargeRelationClassifier,
     SpERTRelationClassifier, PLMarkerRelationClassifier, PURELiteRelationClassifier, FocalLoss
 )
-from train_core import train_model, train_spert_model
-from eval import compute_metrics, save_test_artifacts, aggregate_results
+from re_train_core import train_model, train_spert_model
+from re_eval import compute_metrics, save_test_artifacts, aggregate_results
 
 
 def set_seed(seed):

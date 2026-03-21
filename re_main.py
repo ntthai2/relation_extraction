@@ -10,7 +10,7 @@ from config import (
     BATCH_SIZE, EPOCHS, LR, WEIGHT_DECAY, WARMUP_RATIO,
     PATIENCE, MIN_DELTA, SEED, MODEL_VARIANTS, LOSS_VARIANTS
 )
-from run_exp import run_experiment_suite
+from re_run_exp import run_experiment_suite
 
 
 class TeeStream:
