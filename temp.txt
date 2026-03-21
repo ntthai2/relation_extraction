@@ -1,0 +1,16 @@
+python build_kg.py --triples json/triples_cscl_2024.json --output-viz html/kg_cscl_2024.html --output-stats json/kg_stats_cscl_2024.json
+python build_kg.py --triples json/triples_cscl_2025.json --output-viz html/kg_cscl_2025.html --output-stats json/kg_stats_cscl_2025.json
+python build_kg.py --triples json/triples_cslg.json --output-viz html/kg_cslg.html --output-stats json/kg_stats_cslg.json
+python build_kg.py --triples json/triples_cscv.json --output-viz html/kg_cscv.html --output-stats json/kg_stats_cscv.json
+
+
+python analyze_kg.py --analysis gap --triples json/triples_cscl_2025.json --min-cooccurrence 10 --top-n 20
+python analyze_kg.py --analysis trend --triples-a json/triples_cscl_2024.json --triples-b json/triples_cscl_2025.json --label-a "cs.CL 2024" --label-b "cs.CL 2025" --top-n 20
+
+python analyze_kg.py --analysis method-task --triples json/triples_cscl_2025.json --query "named entity recognition"
+python analyze_kg.py --analysis method-task --triples json/triples_cscl_2025.json --query "machine translation"
+python analyze_kg.py --analysis method-task --triples json/triples_cscl_2025.json --query "large language models"
+
+python analyze_kg.py --analysis taxonomy --triples json/triples_cscl_2025.json --root "large language models"
+python analyze_kg.py --analysis dataset-discovery --triples json/triples_cscl_2025.json --top-n 20
+python analyze_kg.py --analysis cross-domain --triples-list json/triples_cscl_2025.json json/triples_cslg.json json/triples_cscv.json --labels "cs.CL 2025" "cs.LG 2025" "cs.CV 2025" --top-n 20

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import math
 from collections import Counter, defaultdict
 from typing import Any
 
@@ -39,6 +41,56 @@ RELATION_TYPES = [
 ]
 
 
+NOISE_ENTITIES = {
+    "model",
+    "models",
+    "data",
+    "text",
+    "results",
+    "method",
+    "methods",
+    "approach",
+    "system",
+    "framework",
+    "technique",
+    "task",
+    "tasks",
+    "dataset",
+    "datasets",
+    "network",
+    "networks",
+    "learning",
+    "training",
+    "inference",
+    "evaluation",
+    "performance",
+    "accuracy",
+    "loss",
+    "paper",
+    "work",
+    "study",
+    "experiment",
+    "experiments",
+    "analysis",
+    "human",
+    "users",
+    "we",
+    "our",
+    "it",
+    "they",
+    "this",
+    "these",
+    "large",
+    "small",
+    "new",
+    "good",
+    "better",
+    "best",
+    "high",
+    "low",
+}
+
+
 def normalize(text: str) -> str:
     text = text.lower().strip()
     text = re.sub(r"\s+", " ", text)
@@ -65,8 +117,74 @@ def normalize(text: str) -> str:
         "kg": "knowledge graph",
         "rag": "retrieval augmented generation",
         "sft": "supervised fine-tuning",
+        "mllms": "multimodal large language models",
+        "multimodal large language models (mllms": "multimodal large language models",
+        "multimodal large language models (mllms)": "multimodal large language models",
+        "vlms": "vision-language models",
+        "vision-language models (vlms": "vision-language models",
+        "vision-language models (vlms)": "vision-language models",
+        "reasoning tasks": "reasoning",
+        "reasoning task": "reasoning",
+        "nlp tasks": "natural language processing tasks",
+        "supervised fine-tuning (sft": "supervised fine-tuning",
+        "supervised fine-tuning (sft)": "supervised fine-tuning",
+        "reinforcement learning (rl": "reinforcement learning",
+        "reinforcement learning (rl)": "reinforcement learning",
+        "reinforcement learning with verifiable rewards": "rlvr",
+        "federated learning (fl": "federated learning",
+        "federated learning (fl)": "federated learning",
+        "graph neural networks (gnns": "graph neural networks",
+        "graph neural networks (gnns)": "graph neural networks",
+        "graph neural network (gnn": "graph neural networks",
+        "retrieval-augmented generation (rag": "retrieval augmented generation",
+        "retrieval-augmented generation (rag)": "retrieval augmented generation",
+        "retrieval augmented generation (rag": "retrieval augmented generation",
+        "retrieval augmented generation (rag)": "retrieval augmented generation",
+        "agentic rag": "agentic retrieval augmented generation",
+        "naïve rag": "naive retrieval augmented generation",
+        "slms": "small language models",
+        "small language models (slms": "small language models",
+        "small language models (slms)": "small language models",
+        "large language models (llms)": "large language models",
+        "llms'": "large language models",
+        "llm's": "large language models",
+        "llama-2": "llama",
+        "llama-3": "llama",
+        "llama 3": "llama",
+        "llama2": "llama",
+        "llama3": "llama",
+        "bert-base": "bert",
+        "bert-large": "bert",
+        "bert model": "bert",
+        "large language model": "large language models",
+        "foundation model": "foundation models",
+        "language model": "language models",
+        "diffusion model": "diffusion models",
+        "vision language model": "vision-language models",
+        "gpt-4-turbo": "gpt-4",
+        "gpt-4 turbo": "gpt-4",
+        "gpt4": "gpt-4",
+        "gpt-3.5": "gpt-3.5-turbo",
+        "gpt4o": "gpt-4o",
+        "3d gaussian splatting (3dgs": "3d gaussian splatting",
+        "3d gaussian splatting (3dgs)": "3d gaussian splatting",
+        "vision-language-action (vla) models": "vision language action models",
+        "vla models": "vision language action models",
+        "deep reinforcement learning (drl": "deep reinforcement learning",
+        "deep reinforcement learning (drl)": "deep reinforcement learning",
+        "drl": "deep reinforcement learning",
+        "partial differential equations (pdes": "partial differential equations",
+        "partial differential equations (pdes)": "partial differential equations",
+        "pdes": "partial differential equations",
     }
     text = acronym_map.get(text, text)
+
+    # Strip parenthetical suffixes not covered by the acronym map
+    if text not in acronym_map:
+        candidate = re.sub(r"\s*\([^)]*\)\s*$", "", text).strip()
+        candidate = re.sub(r"\s*\([^)]*$", "", candidate).strip()
+        text = acronym_map.get(candidate, candidate)
+
     return text
 
 
@@ -98,6 +216,8 @@ def build_kg(
         if not subject or not obj or not relation:
             continue
         if subject == obj:
+            continue
+        if subject in NOISE_ENTITIES or obj in NOISE_ENTITIES:
             continue
 
         node_count[subject] += 1
@@ -258,9 +378,10 @@ def analyze_kg(G: nx.MultiDiGraph) -> dict:
         "per_relation_top_edges": per_relation_top,
     }
 
-    with open("kg_stats.json", "w", encoding="utf-8") as f:
+    os.makedirs("json", exist_ok=True)
+    with open("json/kg_stats.json", "w", encoding="utf-8") as f:
         json.dump(stats, f, indent=2, ensure_ascii=False)
-    print("\nSaved stats to kg_stats.json")
+    print("\nSaved stats to json/kg_stats.json")
 
     return stats
 
@@ -284,11 +405,11 @@ def export_visualization(
         font_color="white",
     )
     net.barnes_hut(
-        gravity=-8000,
-        central_gravity=0.3,
-        spring_length=150,
-        spring_strength=0.02,
-        damping=0.15,
+        gravity=-10000,
+        central_gravity=0.1,
+        spring_length=200,
+        spring_strength=0.01,
+        damping=0.2
     )
     net.show_buttons(filter_=['physics'])
 
@@ -340,7 +461,7 @@ def export_visualization(
             u,
             v,
             color=color,
-            width=1 + min(weight, 10),
+            width=0.5 + math.log1p(weight) * 0.8,
             title=title,
             arrows="to",
         )
@@ -352,18 +473,21 @@ def export_visualization(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build and visualize knowledge graph from triples")
-    parser.add_argument("--triples", type=str, default="triples.json")
-    parser.add_argument("--output-viz", type=str, default="kg_visualization.html")
-    parser.add_argument("--output-stats", type=str, default="kg_stats.json")
+    parser.add_argument("--triples", type=str, default="json/triples.json")
+    parser.add_argument("--output-viz", type=str, default="html/kg_visualization.html")
+    parser.add_argument("--output-stats", type=str, default="json/kg_stats.json")
     parser.add_argument("--min-edge-weight", type=int, default=1)
     parser.add_argument("--min-node-count", type=int, default=1)
-    parser.add_argument("--viz-max-nodes", type=int, default=300)
-    parser.add_argument("--viz-min-edge-weight", type=int, default=2)
+    parser.add_argument("--viz-max-nodes", type=int, default=100)
+    parser.add_argument("--viz-min-edge-weight", type=int, default=3)
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
+
+    os.makedirs("json", exist_ok=True)
+    os.makedirs("html", exist_ok=True)
 
     G = build_kg(
         triples_path=args.triples,
@@ -372,7 +496,7 @@ def main() -> None:
     )
 
     stats = analyze_kg(G)
-    if args.output_stats != "kg_stats.json":
+    if args.output_stats != "json/kg_stats.json":
         with open(args.output_stats, "w", encoding="utf-8") as f:
             json.dump(stats, f, indent=2, ensure_ascii=False)
         print(f"Saved stats to {args.output_stats}")

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -338,7 +339,7 @@ class ScienceIEPipeline:
 def extract_from_file(
     pipeline: ScienceIEPipeline,
     input_path: str,
-    output_path: str,
+    output_path: str = "json/triples.json",
 ) -> list[dict[str, Any]]:
     """
     Run pipeline on a list of abstracts from a JSON file.
@@ -359,6 +360,7 @@ def extract_from_file(
             triple_with_id["paper_id"] = paper_id
             all_triples.append(triple_with_id)
 
+    os.makedirs("json", exist_ok=True)
     output_parent = Path(output_path).parent
     output_parent.mkdir(parents=True, exist_ok=True)
 
