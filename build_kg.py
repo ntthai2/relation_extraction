@@ -269,7 +269,7 @@ def export_visualization(
     G: nx.MultiDiGraph,
     output_path: str = "kg_visualization.html",
     max_nodes: int = 300,
-    min_edge_weight: int = 2,
+    min_edge_weight: int = 3,
 ) -> None:
     """
     Export an interactive pyvis HTML visualization.
@@ -284,15 +284,17 @@ def export_visualization(
         font_color="white",
     )
     net.barnes_hut(
-        gravity=-5000,
+        gravity=-8000,
         central_gravity=0.3,
-        spring_length=100,
-        spring_strength=0.05,
-        damping=0.09,
+        spring_length=150,
+        spring_strength=0.02,
+        damping=0.15,
     )
+    net.show_buttons(filter_=['physics'])
 
     ranked_nodes = sorted(G.nodes(), key=lambda n: (-int(G.degree(n)), n))
     selected_nodes = set(ranked_nodes[:max_nodes])
+    top_5_nodes = set(ranked_nodes[:5])
 
     if selected_nodes:
         max_degree = max(int(G.degree(n)) for n in selected_nodes)
@@ -306,6 +308,7 @@ def export_visualization(
         count = int(attrs.get("count", 0))
         color = TYPE_COLORS.get(node_type, "#BDC3C7")
         size = 10 + (degree / max_degree) * 40 if max_degree > 0 else 10
+        font_size = 16 if node in top_5_nodes else 12
 
         title = (
             f"Entity: {node}<br>"
@@ -314,7 +317,7 @@ def export_visualization(
             f"Degree: {degree}"
         )
 
-        net.add_node(node, label=node, color=color, size=size, title=title)
+        net.add_node(node, label=node, color=color, size=size, title=title, font={"size": font_size, "color": "white"})
 
     for u, v, attrs in G.edges(data=True):
         if u not in selected_nodes or v not in selected_nodes:
@@ -336,13 +339,13 @@ def export_visualization(
         net.add_edge(
             u,
             v,
-            label=relation,
             color=color,
             width=1 + min(weight, 10),
             title=title,
             arrows="to",
         )
 
+    net.options.edges = {"arrows": {"to": {"scaleFactor": 0.5}}}
     net.save_graph(output_path)
     print(f"Saved visualization to {output_path}")
 
