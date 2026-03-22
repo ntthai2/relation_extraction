@@ -22,17 +22,23 @@ arXiv abstracts
 
 ```bash
 # 1. Fetch abstracts
-python fetch_arxiv.py --target 500 --output abstracts.json
+python fetch_arxiv.py --category cs.CL --date-from 20251101 --date-to 20251231 --target 3000 --output json/abstracts.json
 
 # 2. Extract triples
 python -c "
 from inference import ScienceIEPipeline, extract_from_file
 pipeline = ScienceIEPipeline()
-extract_from_file(pipeline, 'abstracts.json', 'triples.json')
+extract_from_file(pipeline, 'json/abstracts.json', 'json/triples.json')
 "
 
 # 3. Build knowledge graph
-python build_kg.py --triples triples.json
+python build_kg.py --triples json/triples.json --output-viz html/kg.html --output-stats json/kg_stats.json
+
+# 4. Run analyses
+python analyze_kg.py --analysis trend --triples-a json/triples_cscl_2024.json --triples-b json/triples_cscl_2025.json
+python analyze_kg.py --analysis method-task --triples json/triples_cscl_2025.json --query "reasoning"
+python analyze_kg.py --analysis taxonomy --triples json/triples_cscl_2025.json --root "large language models"
+python analyze_kg.py --analysis cross-domain --triples-list json/triples_cscl_2025.json json/triples_cslg.json json/triples_cscv.json --labels "cs.CL 2025" "cs.LG 2025" "cs.CV 2025"
 ```
 
 ### Run on a single abstract
@@ -72,9 +78,10 @@ python re_main.py \
 
 | File | Responsibility |
 |---|---|
-| `fetch_arxiv.py` | Fetch cs.CL abstracts from arXiv API |
+| `fetch_arxiv.py` | Fetch abstracts from arXiv API (multi-category, date-sliced) |
 | `inference.py` | End-to-end NER → RE → triples on raw text |
 | `build_kg.py` | Build NetworkX KG, analyze, export pyvis HTML |
+| `analyze_kg.py` | Six analyses: gap finding, trend, method-task, taxonomy, dataset discovery, cross-domain |
 
 ### NER files
 
@@ -96,17 +103,14 @@ python re_main.py \
 | `re_run_exp.py` | Experiment orchestration, registries, optimizers |
 | `re_main.py` | RE CLI entry point |
 
-### Data
+### Data and outputs
 
 ```
-scierc/
-├── train.json / train.txt   — 3,219 training samples
-├── dev.json   / dev.txt     — 455 dev samples
-└── test.json  / test.txt    — 974 test samples
+scierc/          — SciERC train/dev/test splits (.json and .txt)
+json/            — all JSON outputs (abstracts, triples, KG stats, analysis results)
+html/            — pyvis interactive KG visualizations
+runs/            — RE experiment checkpoints and metrics
 ```
-
-- `.json` — full SciERC format with NER, relations, coreference, sentences
-- `.txt` — relation-only format: `{"text": "... [[ e1 ]] ... << e2 >> ...", "label": "...", "metadata": [e1_start, e1_end, e2_start, e2_end]}`
 
 ### Checkpoints
 
@@ -121,8 +125,8 @@ scierc/
 
 ### RE — Relation Extraction
 
-**Best config:** `scibert + e1e2_concat + ce_uniform`  
-**Test macro F1: 0.8243 ± 0.0052** (5 seeds)
+**Best config:** `scibert + e1e2_concat + ce_uniform`
+**Test macro F1: 0.8243 ± 0.0052** (5 seeds: 13, 21, 42, 87, 100)
 
 | Relation | F1 | Precision | Recall |
 |---|---|---|---|
@@ -136,8 +140,8 @@ scierc/
 
 ### NER — Named Entity Recognition
 
-**Best config:** SciBERT token classifier, 3 entity types  
-**Test token F1: 0.7956 ± 0.003** (3 seeds)
+**Best config:** SciBERT token classifier, 3 entity types
+**Test token F1: 0.7956 ± 0.003** (3 seeds: 13, 42, 87)
 
 | Entity type | F1 | Precision | Recall |
 |---|---|---|---|
@@ -147,33 +151,28 @@ scierc/
 
 ---
 
-## Knowledge Graph (500 cs.CL papers, 2024–2025)
+## Knowledge Graph — Full Dataset (19,123 papers, Nov–Dec 2024/2025)
 
-| Stat | Value |
-|---|---|
-| Nodes | 6,290 |
-| Unique edges | 22,917 |
-| Papers | 500 |
-| Triples extracted | 23,556 |
+| Source | Period | Papers | Triples |
+|---|---|---|---|
+| cs.CL | Nov–Dec 2024 | 2,972 | 119,819 |
+| cs.CL | Nov–Dec 2025 | 2,911 | 134,680 |
+| cs.LG | Nov–Dec 2025 | 7,078 | 279,090 |
+| cs.CV | Nov–Dec 2025 | 6,162 | 285,793 |
+| **Total** | | **19,123** | **819,382** |
 
-**Node type distribution:** METHOD 3,161 / TASK 1,951 / DATASET 1,178
+**Top finding:** `large language models → USED-FOR → reasoning` is the single most
+frequent relation in all three domains simultaneously — the universal pattern of late 2025 AI research.
 
-**Relation distribution:**
+**Key trend (cs.CL 2024→2025):** Reinforcement learning replaced in-context learning
+as the dominant paradigm applied to LLMs. COMPARE relations grew +34.8% normalized —
+the field became significantly more comparative.
 
-| Relation | Count |
-|---|---|
-| USED-FOR | 11,873 |
-| CONJUNCTION | 4,907 |
-| EVALUATE-FOR | 2,391 |
-| COMPARE | 1,434 |
-| HYPONYM-OF | 1,240 |
-| FEATURE-OF | 1,096 |
-| PART-OF | 527 |
+**Cross-domain:** LLMs are 12× more central in cs.CL (norm degree 2.805) than cs.CV (0.238).
+In cs.CV, vision-language models (0.411) surpass LLMs as the dominant hub.
 
-**Top entities by degree:** large language models (1,440), reasoning (159), inference (125),
-reinforcement learning (125), generation (107)
-
-**Outputs:** `triples.json`, `kg_stats.json`, `kg_visualization.html`
+For full analysis results: see [EXPERIMENTS.md](EXPERIMENTS.md#kg-pipeline--analyses)
+For architecture explanations: see [EXPLANATION.md](EXPLANATION.md)
 
 ---
 
@@ -197,6 +196,3 @@ reinforcement learning (125), generation (107)
 | `--frozen-bert` | flag | False | Freeze encoder weights |
 | `--smoke-test` | flag | False | 1 epoch, 128 samples debug run |
 | `--run-name` | str | `scibert_scierc` | Output directory name |
-
-For full RE experiment results: see [EXPERIMENTS.md](EXPERIMENTS.md)  
-For architecture explanations: see [EXPLANATION.md](EXPLANATION.md)
